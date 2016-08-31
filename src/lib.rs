@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate nom;
 extern crate byteorder;
 
 use byteorder::{NetworkEndian, ReadBytesExt};
@@ -8,6 +10,8 @@ use std::fmt;
 
 pub use error::RPMError;
 mod error;
+
+mod parser;
 
 use std::result;
 pub type Result<T> = result::Result<T, error::RPMError>;
