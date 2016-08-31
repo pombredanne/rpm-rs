@@ -1,0 +1,7 @@
+[package]
+name = "rpm"
+version = "0.1.0"
+authors = ["Will Woods <wwoods@redhat.com>"]
+
+[dependencies]
+byteorder = "0.5.3"
