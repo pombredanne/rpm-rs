@@ -1,5 +1,5 @@
 use std::str::from_utf8;
-use nom::{be_u8, be_i16, be_u32};
+use nom::{be_u8, be_u16, be_i16, be_u32, be_u64, anychar, IResult};
 
 // HERE'S OUR CORE DATA TYPES / STRUCTS / ENUMS, YAYYYYY
 
@@ -25,8 +25,6 @@ pub enum TagType {
     Int64,
     String,
     Binary,
-    StringArray,
-    I18NString,
 }
 
 // convert a u32 to the equivalent TagType variant.
@@ -39,12 +37,22 @@ fn u32_to_tagtype(val: u32) -> Result<TagType, &'static str> {
         3 => Ok(TagType::Int16),
         4 => Ok(TagType::Int32),
         5 => Ok(TagType::Int64),
-        6 => Ok(TagType::String),
-        7 => Ok(TagType::Binary),
-        8 => Ok(TagType::StringArray),
-        9 => Ok(TagType::I18NString),
+        6|8|9 => Ok(TagType::String),
+        7|10|11 => Ok(TagType::Binary),
         _ => Err("Unknown tag type"),
     }
+}
+
+#[derive(Debug,PartialEq,Eq)]
+pub enum TagValue<'a> {
+    Null,
+    Char(Vec<char>),
+    Int8(Vec<u8>),
+    Int16(Vec<u16>),
+    Int32(Vec<u32>),
+    Int64(Vec<u64>),
+    String(Vec<&'a str>),
+    Binary(&'a [u8]),
 }
 
 #[derive(Debug,PartialEq,Eq)]
@@ -72,11 +80,14 @@ pub struct HeaderSection<'a> {
 
 // HERE'S THE PARSER STUFF YAYYYYY
 
-// macro that pulls a fixed-size NUL-terminated string.
+// quick parser function to grab a NUL-terminated string
+named!(cstr(&[u8]) -> &str, map_res!(take_until!("\0"), from_utf8));
+
+// macro that gets a fixed-size NUL-terminated string, tossing the NUL bytes
 macro_rules! take_cstr (
     ($i:expr, $maxlen:expr) => (
         chain!($i,
-            s: map_res!(take_until!("\0"), from_utf8) ~
+            s: cstr ~
             length: expr_opt!( { ($maxlen as usize).checked_sub(s.len()) } ) ~
             take!(length),
             || {s}
@@ -122,28 +133,28 @@ named!(parse_tag_entry(&[u8]) -> TagEntry,
     )
 );
 
-// TODO: better types...
-// NOTE: For String we don't know the size - just read 'til you hit a '\0'
-// NOTE: For StringArray you just read tag.count Strings
-// NOTE: For Char and Int* we should return a Vec<T>
-// NOTE: Binary's the easy one - the value's type is &[u8;tag.count]
-// NOTE: okay Null is the easy one. no value needed! (prolly need a placeholder tho)
-// NOTE: values could overlap, or extend outside the store, or... yecch
-use nom::IResult;
-fn parse_tag_value<'a>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], &'a [u8]> {
-    let length = match tag.tagtype {
-        TagType::Null =>        0,
-        TagType::Char =>        tag.count,
-        TagType::Int8 =>        tag.count,
-        TagType::Int16 =>       tag.count * 2,
-        TagType::Int32 =>       tag.count * 4,
-        TagType::Int64 =>       tag.count * 8,
-        TagType::Binary =>      tag.count,
-        TagType::String =>      0,
-        TagType::StringArray => 0,
-        TagType::I18NString =>  0,
-    };
-    IResult::Done(i, &i[tag.offset as usize..(tag.offset+length) as usize])
+fn _parse_tagval<'a, 'b>(store: &'a [u8], tag: &'a TagEntry) -> IResult<&'a [u8], TagValue<'a>> {
+    let count = tag.count as usize;
+    match tag.tagtype {
+        TagType::Null   => value!(store, TagValue::Null),
+        TagType::Char   => count!(store, anychar, count).map(|v| TagValue::Char(v)),
+        TagType::Int8   => count!(store, be_u8, count).map(  |v| TagValue::Int8(v)),
+        TagType::Int16  => count!(store, be_u16, count).map( |v| TagValue::Int16(v)),
+        TagType::Int32  => count!(store, be_u32, count).map( |v| TagValue::Int32(v)),
+        TagType::Int64  => count!(store, be_u64, count).map( |v| TagValue::Int64(v)),
+        TagType::String => count!(store, cstr, count).map(   |v| TagValue::String(v)),
+        TagType::Binary =>  take!(store, count).map(         |v| TagValue::Binary(v)),
+    }
+}
+
+fn parse_tagval<'a>(i: &'a [u8], tag: &'a TagEntry) -> IResult<&'a [u8], TagValue<'a>> {
+    peek!(i,
+        chain!(
+            take!(tag.offset as usize) ~
+            val: apply!(_parse_tagval, tag),
+            || { val }
+        )
+    )
 }
 
 named!(parse_section(&[u8]) -> HeaderSection,
@@ -151,6 +162,7 @@ named!(parse_section(&[u8]) -> HeaderSection,
         hdr: parse_section_header ~
         tags: count!(parse_tag_entry, hdr.count as usize) ~
         store: take!(hdr.size),
+        //vals: call!(tags.iter().map(|t:&TagEntry|t.parse_tagval(store)).collect()),
         || { HeaderSection { hdr: hdr, tags: tags, store: store } }
     )
 );
@@ -235,6 +247,15 @@ fn parse_tag_entry_bad_tagtype() {
     assert_eq!(parse_tag_entry(bytes),
         IResult::Error(Err::Position(ErrorKind::MapRes, &bytes[4..]))
     )
+}
+
+#[test]
+fn parse_tagval_str() {
+    let store = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x1968..0x313a];
+    let tag = TagEntry { tag:0x03e8, tagtype:TagType::String, offset:0x0002, count:1 };
+    let (rest, val) = parse_tagval(store, &tag).unwrap();
+    assert_eq!(parse_tagval(store, &tag),
+               IResult::Done(store, TagValue::String(vec!["hardlink"])))
 }
 
 #[test]
