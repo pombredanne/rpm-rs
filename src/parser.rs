@@ -1,5 +1,5 @@
 use std::str::from_utf8;
-use nom::{be_u8, be_u16, be_i16, be_u32, be_u64, anychar, IResult};
+use nom::{be_u8, be_u16, be_u32, be_u64, IResult};
 
 // HERE'S OUR CORE DATA TYPES / STRUCTS / ENUMS, YAYYYYY
 
@@ -7,16 +7,16 @@ use nom::{be_u8, be_u16, be_i16, be_u32, be_u64, anychar, IResult};
 pub struct Lead<'a> {
     pub major:          u8,         // file format major version number (0x03)
     pub minor:          u8,         // file format minor version number (0x00)
-    pub rpm_type:       i16,        // package type (0x00 = binary, 0x01 = source)
-    pub archnum:        i16,        // if binary: package arch (0x01 = i386, etc.)
+    pub rpm_type:       u16,        // package type (0x00 = binary, 0x01 = source)
+    pub archnum:        u16,        // if binary: package arch (0x01 = i386, etc.)
     pub name:           &'a str,    // actually a NUL-terminated [u8;66]
-    pub osnum:          i16,        // if binary: package OS (0x01 = Linux)
-    pub signature_type: i16,        // package signature type (0x05)
+    pub osnum:          u16,        // if binary: package OS (0x01 = Linux)
+    pub signature_type: u16,        // package signature type (0x05)
 }
 // TODO: implement Display
 
 #[derive(Debug,PartialEq,Eq)]
-pub enum TagType {
+enum TagType {
     Null,
     Char,
     Int8,
@@ -37,22 +37,22 @@ fn u32_to_tagtype(val: u32) -> Result<TagType, &'static str> {
         3 => Ok(TagType::Int16),
         4 => Ok(TagType::Int32),
         5 => Ok(TagType::Int64),
-        6|8|9 => Ok(TagType::String),
-        7|10|11 => Ok(TagType::Binary),
+        6|8|9 => Ok(TagType::String),   // RPM code says these are equivalent
+        7|10|11 => Ok(TagType::Binary), // rpm.org wiki says 10 & 11 are also binary blobs
         _ => Err("Unknown tag type"),
     }
 }
 
 #[derive(Debug,PartialEq,Eq)]
-pub enum TagValue<'a> {
+enum TagValue<'a> {
     Null,
-    Char(Vec<char>),
-    Int8(Vec<u8>),
-    Int16(Vec<u16>),
-    Int32(Vec<u32>),
-    Int64(Vec<u64>),
-    String(Vec<&'a str>),
-    Binary(&'a [u8]),
+    Char(Vec<u8>),          // C unsigned char == uint8_t
+    Int8(Vec<u8>),          // uint8_t
+    Int16(Vec<u16>),        // uint16_t
+    Int32(Vec<u32>),        // uint32_t
+    Int64(Vec<u64>),        // uint64_t
+    String(Vec<&'a str>),   // One or more strings
+    Binary(&'a [u8]),       // A binary blob
 }
 
 #[derive(Debug,PartialEq,Eq)]
@@ -62,33 +62,37 @@ pub struct HeaderSectionHeader {
     size: u32,
 }
 
+type TagID = u32;
+
 #[derive(Debug,PartialEq,Eq)]
 pub struct TagEntry {
-    tag: u32, // TODO: a Tag enum
+    tag: TagID,
     tagtype: TagType,
     offset: u32,
     count: u32,
 }
 
-// TODO: implement an iterator for (tag, val) pairs?
 #[derive(Debug,PartialEq,Eq)]
 pub struct HeaderSection<'a> {
     hdr: HeaderSectionHeader,
     tags: Vec<TagEntry>,
-    store: &'a [u8], // TODO: i dunno about this lifetime...
+    store: &'a [u8],
 }
+
+use std::collections::HashMap;
+type Header<'a> = HashMap<TagID, TagValue<'a>>;
 
 // HERE'S THE PARSER STUFF YAYYYYY
 
 // quick parser function to grab a NUL-terminated string
-named!(cstr(&[u8]) -> &str, map_res!(take_until!("\0"), from_utf8));
+named!(cstr(&[u8]) -> &str, map_res!(take_until_and_consume!("\0"), from_utf8));
 
 // macro that gets a fixed-size NUL-terminated string, tossing the NUL bytes
 macro_rules! take_cstr (
     ($i:expr, $maxlen:expr) => (
         chain!($i,
             s: cstr ~
-            length: expr_opt!( { ($maxlen as usize).checked_sub(s.len()) } ) ~
+            length: expr_opt!( { ($maxlen as usize).checked_sub(s.len()+1) } ) ~
             take!(length),
             || {s}
         )
@@ -100,11 +104,11 @@ named!(parse_lead(&[u8]) -> Lead,
         tag!([0xED, 0xAB, 0xEE, 0xDB]) ~ // the tilde chains items together
         maj:  be_u8  ~
         min:  be_u8  ~
-        typ:  be_i16 ~
-        arch: be_i16 ~
+        typ:  be_u16 ~
+        arch: be_u16 ~
         name: take_cstr!(66) ~
-        os:   be_i16 ~
-        sig:  be_i16 ~
+        os:   be_u16 ~
+        sig:  be_u16 ~
         take!(16), // the chain ends with a comma
         // closure yields our return value
         || { Lead {major: maj, minor: min, rpm_type: typ, archnum: arch,
@@ -133,42 +137,17 @@ named!(parse_tag_entry(&[u8]) -> TagEntry,
     )
 );
 
-fn _parse_tagval<'a, 'b>(store: &'a [u8], tag: &'a TagEntry) -> IResult<&'a [u8], TagValue<'a>> {
-    let count = tag.count as usize;
-    match tag.tagtype {
-        TagType::Null   => value!(store, TagValue::Null),
-        TagType::Char   => count!(store, anychar, count).map(|v| TagValue::Char(v)),
-        TagType::Int8   => count!(store, be_u8, count).map(  |v| TagValue::Int8(v)),
-        TagType::Int16  => count!(store, be_u16, count).map( |v| TagValue::Int16(v)),
-        TagType::Int32  => count!(store, be_u32, count).map( |v| TagValue::Int32(v)),
-        TagType::Int64  => count!(store, be_u64, count).map( |v| TagValue::Int64(v)),
-        TagType::String => count!(store, cstr, count).map(   |v| TagValue::String(v)),
-        TagType::Binary =>  take!(store, count).map(         |v| TagValue::Binary(v)),
-    }
-}
-
-fn parse_tagval<'a>(i: &'a [u8], tag: &'a TagEntry) -> IResult<&'a [u8], TagValue<'a>> {
-    peek!(i,
-        chain!(
-            take!(tag.offset as usize) ~
-            val: apply!(_parse_tagval, tag),
-            || { val }
-        )
-    )
-}
-
 named!(parse_section(&[u8]) -> HeaderSection,
     chain!(
         hdr: parse_section_header ~
         tags: count!(parse_tag_entry, hdr.count as usize) ~
         store: take!(hdr.size),
-        //vals: call!(tags.iter().map(|t:&TagEntry|t.parse_tagval(store)).collect()),
         || { HeaderSection { hdr: hdr, tags: tags, store: store } }
     )
 );
 
 // parse the entire RPM header into (Lead, Signature, Header)
-named!(parse_header(&[u8]) -> (Lead, HeaderSection, HeaderSection),
+named!(parse_headers(&[u8]) -> (Lead, HeaderSection, HeaderSection),
     chain!(
         lead: parse_lead ~
         sig: parse_section ~
@@ -177,6 +156,57 @@ named!(parse_header(&[u8]) -> (Lead, HeaderSection, HeaderSection),
         || { (lead, sig, hdr) }
     )
 );
+
+// FIXME: we need size so we can calculate padding!
+// probably we should just return a HeaderSection and then use a
+// draining iterator to convert it into a Header.
+named!(parse_header(&[u8]) -> Header,
+    chain!(
+        // grab the header section header
+        tag!([0x8E, 0xAD, 0xE8])    ~
+        version: be_u8              ~
+        take!(4)                    ~
+        count: be_u32               ~
+        size: be_u32                ~
+        // peek ahead and grab the store
+        store: peek!(
+            chain!(
+                take!(16*count) ~
+                store: take!(size),
+                || { store }
+            )
+        )                           ~
+        // parse each tag entry, grabbing its data from the store
+        pairs: count!(apply!(parse_tag, store), count as usize) ~
+        // we're finished with the store now - skip over it
+        take!(size),
+        // dump the output pairs into a Header
+        || { pairs.into_iter().collect::<Header>() }
+    )
+);
+
+// FIXME: these helpers are kinda gnarly and I don't like the weird lifetimes..
+
+fn parse_tag<'a>(i: &'a [u8], store: &'a [u8]) -> IResult<&'a [u8], (TagID, TagValue<'a> ) > {
+    let (rest, tag) = try_parse!(i, parse_tag_entry);
+    let (_, val)    = try_parse!(&store[tag.offset as usize..], apply!(parse_tagval, &tag));
+    IResult::Done(rest, (tag.tag, val))
+}
+
+fn parse_tagval<'a, 'b>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue<'a>> {
+    let count = tag.count as usize;
+    // TODO: benchmark this match block against the alt!(cond_reduce!(...)|) style
+    match tag.tagtype {
+        TagType::Null   => value!(i, TagValue::Null),
+        TagType::Char   => map!(i, count!(be_u8, count),  TagValue::Char),
+        TagType::Int8   => map!(i, count!(be_u8, count),  TagValue::Int8),
+        TagType::Int16  => map!(i, count!(be_u16, count), TagValue::Int16),
+        TagType::Int32  => map!(i, count!(be_u32, count), TagValue::Int32),
+        TagType::Int64  => map!(i, count!(be_u64, count), TagValue::Int64),
+        TagType::String => map!(i, count!(cstr, count),   TagValue::String),
+        TagType::Binary => map!(i, take!(count),          TagValue::Binary),
+    }
+}
 
 /*************************************************************
  * BELOW HERE BE TESTS!! WHEEEEE!
@@ -253,15 +283,14 @@ fn parse_tag_entry_bad_tagtype() {
 fn parse_tagval_str() {
     let store = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x1968..0x313a];
     let tag = TagEntry { tag:0x03e8, tagtype:TagType::String, offset:0x0002, count:1 };
-    let (rest, val) = parse_tagval(store, &tag).unwrap();
-    assert_eq!(parse_tagval(store, &tag),
-               IResult::Done(store, TagValue::String(vec!["hardlink"])))
+    assert_eq!(parse_tagval(&store[tag.offset as usize..20], &tag),
+               IResult::Done(&store[11..20], TagValue::String(vec!["hardlink"])))
 }
 
 #[test]
 fn parse_full_header_ok() {
     let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[..];
-    let (rest, (lead, sig, hdr)) = parse_header(bytes).unwrap();
+    let (rest, (lead, sig, hdr)) = parse_headers(bytes).unwrap();
     assert_eq!(rest[..4], b"\xfd7zX"[..]); // XZ magic for the payload start
     assert_eq!(lead.name, "hardlink-1:1.0-23.fc24");
     assert_eq!(sig.tags, vec![
@@ -276,3 +305,22 @@ fn parse_full_header_ok() {
     ]);
     assert_eq!(hdr.hdr.count, 0x3e)
 }
+
+#[test]
+fn test_parse_header_ok() {
+    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x60..];
+    let (_, hdr) = parse_header(bytes).unwrap();
+    assert_eq!(hdr.len(), 8);
+    assert_eq!(hdr.get(&(0x10d as TagID)),
+               Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
+}
+
+/*
+#[test]
+fn test_parse_rpm_headers() {
+    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x60..];
+    let (rest, (lead, sig, hdr)) = parse_rpm_headers(bytes).unwrap();
+    assert_eq!(sig.get(&(0x10d as TagID)),
+               Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
+}
+*/
