@@ -1,5 +1,8 @@
 use std::str::from_utf8;
-use nom::{be_u8, be_u16, be_u32, be_u64, IResult};
+use nom::{be_u8, be_u16, be_u32, be_i32, be_u64, IResult};
+
+// TODO: use tag::TagID;
+pub type TagID = i32;
 
 // HERE'S OUR CORE DATA TYPES / STRUCTS / ENUMS, YAYYYYY
 
@@ -27,22 +30,6 @@ enum TagType {
     Binary,
 }
 
-// convert a u32 to the equivalent TagType variant.
-// TODO: surely there's a better way to do this (without FromPrimitive)?
-fn u32_to_tagtype(val: u32) -> Result<TagType, &'static str> {
-    match val {
-        0 => Ok(TagType::Null),
-        1 => Ok(TagType::Char),
-        2 => Ok(TagType::Int8),
-        3 => Ok(TagType::Int16),
-        4 => Ok(TagType::Int32),
-        5 => Ok(TagType::Int64),
-        6|8|9 => Ok(TagType::String),   // RPM code says these are equivalent
-        7|10|11 => Ok(TagType::Binary), // rpm.org wiki says 10 & 11 are also binary blobs
-        _ => Err("Unknown tag type"),
-    }
-}
-
 #[derive(Debug,PartialEq,Eq)]
 enum TagValue<'a> {
     Null,
@@ -62,9 +49,7 @@ pub struct HeaderSectionHeader {
     size: u32,
 }
 
-type TagID = u32;
-
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug,PartialEq)]
 pub struct TagEntry {
     tag: TagID,
     tagtype: TagType,
@@ -72,7 +57,7 @@ pub struct TagEntry {
     count: u32,
 }
 
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug,PartialEq)]
 pub struct HeaderSection<'a> {
     hdr: HeaderSectionHeader,
     tags: Vec<TagEntry>,
@@ -129,13 +114,28 @@ named!(parse_section_header(&[u8]) -> HeaderSectionHeader,
 
 named!(parse_tag_entry(&[u8]) -> TagEntry,
     chain!(
-        tag: be_u32 ~ // TODO: enum for Tags?
+        tag: be_i32 ~ // TODO: enum for Tags?
         typ: map_res!(be_u32, u32_to_tagtype) ~
         off: be_u32 ~
         cnt: be_u32,
         || { TagEntry {tag:tag, tagtype:typ, offset:off, count:cnt} }
     )
 );
+
+// convert a u32 to the equivalent TagType variant.
+fn u32_to_tagtype(val: u32) -> Result<TagType, &'static str> {
+    match val {
+        0 => Ok(TagType::Null),
+        1 => Ok(TagType::Char),
+        2 => Ok(TagType::Int8),
+        3 => Ok(TagType::Int16),
+        4 => Ok(TagType::Int32),
+        5 => Ok(TagType::Int64),
+        6|8|9 => Ok(TagType::String),   // RPM code says these are equivalent
+        7|10|11 => Ok(TagType::Binary), // rpm.org wiki says 10 & 11 are also binary blobs
+        _ => Err("Unknown tag type"),
+    }
+}
 
 named!(parse_section(&[u8]) -> HeaderSection,
     chain!(
@@ -157,37 +157,41 @@ named!(parse_headers(&[u8]) -> (Lead, HeaderSection, HeaderSection),
     )
 );
 
-// FIXME: we need size so we can calculate padding!
-// probably we should just return a HeaderSection and then use a
-// draining iterator to convert it into a Header.
-named!(parse_header(&[u8]) -> Header,
-    chain!(
+// A different approach:
+// * Read the section header
+// * Peek ahead and read the data store
+// * Iterate through the tag entries:
+//   * Read a tag entry
+//   * Read its value from the store
+//   * Return a (TagID, TagValue) pair
+// * Construct a HashMap<TagID, TagValue> from those pairs
+// * Skip padding bytes if the next section is aligned to an 8-byte boundary
+fn _parse_header(i: &[u8], align: bool) -> IResult<&[u8], Header> {
+    chain!(i,
         // grab the header section header
-        tag!([0x8E, 0xAD, 0xE8])    ~
-        version: be_u8              ~
-        take!(4)                    ~
-        count: be_u32               ~
-        size: be_u32                ~
+        hdr: parse_section_header ~
         // peek ahead and grab the store
-        store: peek!(
-            chain!(
-                take!(16*count) ~
-                store: take!(size),
-                || { store }
-            )
-        )                           ~
+        store: peek!(chain!(take!(16*hdr.count) ~ store: take!(hdr.size), || { store })) ~
         // parse each tag entry, grabbing its data from the store
-        pairs: count!(apply!(parse_tag, store), count as usize) ~
+        pairs: count!(apply!(parse_tag, store), hdr.count as usize) ~
         // we're finished with the store now - skip over it
-        take!(size),
+        take!(hdr.size) ~
+        // if align is true, read until we're aligned to an 8-byte boundary
+        cond!(align, take!(if hdr.size % 8 != 0 {8-(hdr.size%8)} else {0})),
         // dump the output pairs into a Header
         || { pairs.into_iter().collect::<Header>() }
     )
+}
+
+named!(parse_header(&[u8]) -> Header, apply!(_parse_header, false));
+named!(parse_header_aligned(&[u8]) -> Header, apply!(_parse_header, true));
+named!(parse_rpm_headers(&[u8]) -> (Lead, Header, Header),
+    tuple!(parse_lead, parse_header_aligned, parse_header)
 );
 
 // FIXME: these helpers are kinda gnarly and I don't like the weird lifetimes..
 
-fn parse_tag<'a>(i: &'a [u8], store: &'a [u8]) -> IResult<&'a [u8], (TagID, TagValue<'a> ) > {
+fn parse_tag<'a, 'b>(i: &'a [u8], store: &'a [u8]) -> IResult<&'a [u8], (TagID, TagValue<'a> ) > {
     let (rest, tag) = try_parse!(i, parse_tag_entry);
     let (_, val)    = try_parse!(&store[tag.offset as usize..], apply!(parse_tagval, &tag));
     IResult::Done(rest, (tag.tag, val))
@@ -315,12 +319,14 @@ fn test_parse_header_ok() {
                Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
 }
 
-/*
 #[test]
 fn test_parse_rpm_headers() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x60..];
+    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[..];
     let (rest, (lead, sig, hdr)) = parse_rpm_headers(bytes).unwrap();
+    assert_eq!(rest[..4], b"\xfd7zX"[..]); // XZ magic for the payload start
+    assert_eq!(lead.name, "hardlink-1:1.0-23.fc24");
     assert_eq!(sig.get(&(0x10d as TagID)),
                Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
+    assert_eq!(hdr.get(&(1000 as TagID)),
+               Some(&TagValue::String(vec!["hardlink"])));
 }
-*/
