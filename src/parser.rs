@@ -218,6 +218,8 @@ fn parse_tagval<'a, 'b>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagVal
 
 #[cfg(test)]
 use nom::{Err, ErrorKind, Needed};
+#[cfg(test)]
+static BINRPM1: &'static [u8] = include_bytes!("../tests/rpms/binary.x86_64.rpm");
 
 #[test]
 fn parse_lead_bad_magic() {
@@ -245,8 +247,7 @@ fn parse_lead_short() {
 
 #[test]
 fn parse_lead_ok() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[..0x60];
-    assert_eq!(parse_lead(bytes), IResult::Done(&b""[..],
+    assert_eq!(parse_lead(&BINRPM1[..0x60]), IResult::Done(&b""[..],
         Lead {
             major: 3,
             minor: 0,
@@ -261,16 +262,14 @@ fn parse_lead_ok() {
 
 #[test]
 fn parse_section_header_ok() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x60..0x70];
-    assert_eq!(parse_section_header(bytes), IResult::Done(&b""[..],
+    assert_eq!(parse_section_header(&BINRPM1[0x60..0x70]), IResult::Done(&b""[..],
         HeaderSectionHeader { version: 1, count: 8, size: 0x1484 }
     ))
 }
 
 #[test]
 fn parse_tag_entry_ok() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x70..0x80];
-    assert_eq!(parse_tag_entry(bytes), IResult::Done(&b""[..],
+    assert_eq!(parse_tag_entry(&BINRPM1[0x70..0x80]), IResult::Done(&b""[..],
       TagEntry { tag: 0x3e, tagtype: TagType::Binary, offset:0x1474, count:0x10 }
     ))
 }
@@ -285,7 +284,7 @@ fn parse_tag_entry_bad_tagtype() {
 
 #[test]
 fn parse_tagval_str() {
-    let store = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x1968..0x313a];
+    let store = &BINRPM1[0x1968..0x313a];
     let tag = TagEntry { tag:0x03e8, tagtype:TagType::String, offset:0x0002, count:1 };
     assert_eq!(parse_tagval(&store[tag.offset as usize..20], &tag),
                IResult::Done(&store[11..20], TagValue::String(vec!["hardlink"])))
@@ -293,8 +292,7 @@ fn parse_tagval_str() {
 
 #[test]
 fn parse_full_header_ok() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[..];
-    let (rest, (lead, sig, hdr)) = parse_headers(bytes).unwrap();
+    let (rest, (lead, sig, hdr)) = parse_headers(BINRPM1).unwrap();
     assert_eq!(rest[..4], b"\xfd7zX"[..]); // XZ magic for the payload start
     assert_eq!(lead.name, "hardlink-1:1.0-23.fc24");
     assert_eq!(sig.tags, vec![
@@ -312,8 +310,7 @@ fn parse_full_header_ok() {
 
 #[test]
 fn test_parse_header_ok() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[0x60..];
-    let (_, hdr) = parse_header(bytes).unwrap();
+    let (_, hdr) = parse_header(&BINRPM1[0x60..]).unwrap();
     assert_eq!(hdr.len(), 8);
     assert_eq!(hdr.get(&(0x10d as TagID)),
                Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
@@ -321,8 +318,7 @@ fn test_parse_header_ok() {
 
 #[test]
 fn test_parse_rpm_headers() {
-    let bytes = &include_bytes!("../tests/rpms/binary.x86_64.rpm")[..];
-    let (rest, (lead, sig, hdr)) = parse_rpm_headers(bytes).unwrap();
+    let (rest, (lead, sig, hdr)) = parse_rpm_headers(BINRPM1).unwrap();
     assert_eq!(rest[..4], b"\xfd7zX"[..]); // XZ magic for the payload start
     assert_eq!(lead.name, "hardlink-1:1.0-23.fc24");
     assert_eq!(sig.get(&(0x10d as TagID)),
