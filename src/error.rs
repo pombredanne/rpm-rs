@@ -9,6 +9,8 @@ pub enum RPMError {
     Internal,
 }
 
+// XXX this seems really verbose - am I doing something stupid here?
+
 impl fmt::Display for RPMError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -45,7 +47,7 @@ impl From<io::Error> for RPMError {
 
 // RPM file parsing errors (see rpmfilesErrorCodes in rpm/lib/rpmarchive.h)
 #[derive(Debug)]
-enum RPMFileError {
+pub enum RPMFileError {
     BadMagic,
     BadHeader,
     HeaderSize,
