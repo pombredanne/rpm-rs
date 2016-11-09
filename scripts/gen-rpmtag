@@ -1,0 +1,73 @@
+#!/bin/bash
+
+generate_enums() {
+    bindgen "$1" | \
+    tee >(get_tag_info | tag_to_keyval > rpmtag.sh) | \
+    sed -r -e '/^pub type /d' \
+           -e '/^pub enum .* \{ \}$/d' \
+           -e 's/^pub enum rpm(\S+)_e \{/pub enum \1 {/' \
+           -e 's/RPMRC_([A-Z0-9_]+) = /\1 = /' \
+           -e 's/RPMTAG_([A-Z0-9_]+) = /\1 = /' \
+           -e 's/RPMDBI_([A-Z0-9_]+) = /\1 = /' \
+           -e 's/RPMSIGTAG_([A-Z0-9_]+) = /\1 = /' \
+           -e 's/RPM_([A-Z0-9_]+)_RETURN_TYPE = /\1 = /' \
+           -e 's/RPM_([A-Z0-9_]+)_TYPE = /\1 = /' \
+           -e 's/RPM_([A-Z0-9_]+)_CLASS = /\1 = /' \
+           -e '/^extern "C" \{/,/^\}$/d'
+}
+
+tag_to_keyval() {
+    sed -r -n -e 's/^ *RPMTAG_([A-Z0-9_]+) = (-?[0-9]+),$/\1=\2/p'
+}
+
+AWK=${AWK:-awk}
+
+get_tag_info() {
+${AWK} '/[\t ](RPMTAG_[A-Z0-9]*)[ \t]+([0-9]*)/ && !/internal/ && !/unimplemented/' $1
+}
+
+rewrite_line() {
+    local t="NULL" a="ANY" ext=false name=""
+    if [ "$2" == "=" ]; then
+        name=$1
+        id=$name
+    else
+        name=$2
+        id=$3
+    fi
+    id=${id#RPMTAG_}
+    name=${name#RPMTAG_}
+    shortname=${name,,}
+    shortname=${shortname^}
+    case $5 in
+	'c')   t="CHAR"   a="SCALAR" ;;
+        'c[]') t="CHAR"   a="ARRAY"  ;;
+        'h')   t="INT16"  a="SCALAR" ;;
+        'h[]') t="INT16"  a="ARRAY" ;;
+        'i')   t="INT32"  a="SCALAR" ;;
+        'i[]') t="INT32"  a="ARRAY" ;;
+        'l')   t="INT64"  a="SCALAR" ;;
+        'l[]') t="INT64"  a="ARRAY" ;;
+        'x')   t="BIN"    a="SCALAR" ;;
+        's')   t="STRING" a="SCALAR" ;;
+        's[]') t="STRING_ARRAY" a="ARRAY" ;;
+        's{}') t="I18NSTRING" a="SCALAR" ;;
+    esac
+    if [ "$6" == "extension" ]; then
+        ext=true
+    fi
+    printf '    TagInfo {name:"%s", shortname:"%s", id:Tag::%s, ttype:TagType::%s, retype:TagReturnType::%s, extension:%s},\n' $name $shortname $id $t $a $ext
+}
+
+infile="${1:-/usr/include/rpm/rpmtag.h}"
+count=$(get_tag_info "$infile" | wc -l)
+
+set -f
+echo "/* generated from $infile by scripts/gen-rpmtag */"
+echo
+generate_enums "$infile"
+echo
+echo "use tag::TagInfo;"
+echo "pub static TAG_INFO_TABLE: [TagInfo;${count}] = ["
+get_tag_info "$infile" | while read line; do rewrite_line $line; done | sort
+echo "];"

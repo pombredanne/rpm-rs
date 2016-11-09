@@ -1,77 +1,36 @@
-use std::str::from_utf8;
+// the linter is pretty bad at dealing with "dead" code in macros, it seems
+#![allow(unused_variables)]
+
 use std::string::String;
+use std::str::{from_utf8, FromStr};
 use nom::{be_u8, be_u16, be_u32, be_i32, be_u64, IResult};
 
-// TODO: use tag::TagID;
-pub type TagID = i32;
+use tag::{TagID, TagType, TagValue};
+use header::{Lead, Header};
 
-// HERE'S OUR CORE DATA TYPES / STRUCTS / ENUMS, YAYYYYY
-
-#[derive(Debug,PartialEq,Eq)]
-pub struct Lead {
-    pub major:          u8,         // file format major version number (0x03)
-    pub minor:          u8,         // file format minor version number (0x00)
-    pub rpm_type:       u16,        // package type (0x00 = binary, 0x01 = source)
-    pub archnum:        u16,        // if binary: package arch (0x01 = i386, etc.)
-    pub name:           String,     // actually a NUL-terminated [u8;66]
-    pub osnum:          u16,        // if binary: package OS (0x01 = Linux)
-    pub signature_type: u16,        // package signature type (0x05)
-}
-// TODO: implement Display
-
-#[derive(Debug,PartialEq,Eq)]
-enum TagType {
-    Null,
-    Char,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    String,
-    Binary,
-}
-
-#[derive(Debug,PartialEq,Eq)]
-enum TagValue<'a> {
-    Null,
-    Char(Vec<u8>),          // C unsigned char == uint8_t
-    Int8(Vec<u8>),          // uint8_t
-    Int16(Vec<u16>),        // uint16_t
-    Int32(Vec<u32>),        // uint32_t
-    Int64(Vec<u64>),        // uint64_t
-    String(Vec<&'a str>),   // One or more strings
-    Binary(&'a [u8]),       // A binary blob
-}
-
+// structs that are part of the RPM header structure
 #[derive(Debug,PartialEq,Eq)]
 pub struct HeaderSectionHeader {
-    version: u8,
-    count: u32,
-    size: u32,
+    pub version: u8,
+    pub count: u32,
+    pub size: u32,
 }
-
-#[derive(Debug,PartialEq)]
-pub struct TagEntry {
-    tag: TagID,
+#[derive(Debug,PartialEq,Eq)]
+struct TagEntry {
+    tagid: TagID,
     tagtype: TagType,
     offset: u32,
     count: u32,
 }
 
-#[derive(Debug,PartialEq)]
-pub struct HeaderSection<'a> {
-    hdr: HeaderSectionHeader,
-    tags: Vec<TagEntry>,
-    store: &'a [u8],
-}
-
-use std::collections::HashMap;
-type Header<'a> = HashMap<TagID, TagValue<'a>>;
-
 // HERE'S THE PARSER STUFF YAYYYYY
 
+// TODO: these should return the errors from RPMFileError
+
 // quick parser function to grab a NUL-terminated string
-named!(cstr(&[u8]) -> &str, map_res!(take_until_and_consume!("\0"), from_utf8));
+named!(cstr(&[u8]) -> String,
+    map_res!(map_res!(take_until_and_consume!("\0"), from_utf8), String::from_str)
+);
 
 // macro that gets a fixed-size NUL-terminated string, tossing the NUL bytes
 macro_rules! take_cstr (
@@ -80,7 +39,7 @@ macro_rules! take_cstr (
             s: cstr ~
             length: expr_opt!( { ($maxlen as usize).checked_sub(s.len()+1) } ) ~
             take!(length),
-            || {s}
+            || { s }
         )
     );
 );
@@ -98,68 +57,32 @@ named!(pub parse_lead(&[u8]) -> Lead,
         take!(16), // the chain ends with a comma
         // closure yields our return value
         || { Lead {major: maj, minor: min, rpm_type: typ, archnum: arch,
-                   name: name.to_string(), osnum: os, signature_type: sig} }
+                   name: name, osnum: os, signature_type: sig} }
   )
 );
 
-named!(parse_section_header(&[u8]) -> HeaderSectionHeader,
+named!(pub parse_section_header(&[u8]) -> HeaderSectionHeader,
     chain!(
-        tag!([0x8E, 0xAD, 0xE8]) ~
-        v: be_u8  ~
-        take!(4)  ~
-        c: be_u32 ~
-        s: be_u32,
-        || { HeaderSectionHeader {version:v, count:c, size:s} }
+        magic:    tag!([0x8E, 0xAD, 0xE8]) ~
+        version:  be_u8    ~
+        reserved: take!(4) ~
+        count:    be_u32   ~
+        size:     be_u32,
+        || { HeaderSectionHeader {version:version, count:count, size:size} }
     )
 );
 
+// read a single TagEntry
 named!(parse_tag_entry(&[u8]) -> TagEntry,
     chain!(
-        tag: be_i32 ~ // TODO: enum for Tags?
-        typ: map_res!(be_u32, u32_to_tagtype) ~
+        id: be_i32 ~
+        typ: map_opt!(be_u32, TagType::from_u32) ~
         off: be_u32 ~
         cnt: be_u32,
-        || { TagEntry {tag:tag, tagtype:typ, offset:off, count:cnt} }
+        || { TagEntry {tagid:id, tagtype:typ, offset:off, count:cnt} }
     )
 );
 
-// convert a u32 to the equivalent TagType variant.
-fn u32_to_tagtype(val: u32) -> Result<TagType, &'static str> {
-    match val {
-        0 => Ok(TagType::Null),
-        1 => Ok(TagType::Char),
-        2 => Ok(TagType::Int8),
-        3 => Ok(TagType::Int16),
-        4 => Ok(TagType::Int32),
-        5 => Ok(TagType::Int64),
-        6|8|9 => Ok(TagType::String),   // RPM code says these are equivalent
-        7|10|11 => Ok(TagType::Binary), // rpm.org wiki says 10 & 11 are also binary blobs
-        _ => Err("Unknown tag type"),
-    }
-}
-
-named!(parse_section(&[u8]) -> HeaderSection,
-    chain!(
-        hdr: parse_section_header ~
-        tags: count!(parse_tag_entry, hdr.count as usize) ~
-        store: take!(hdr.size),
-        || { HeaderSection { hdr: hdr, tags: tags, store: store } }
-    )
-);
-
-// parse the entire RPM header into (Lead, Signature, Header)
-named!(parse_headers(&[u8]) -> (Lead, HeaderSection, HeaderSection),
-    chain!(
-        lead: parse_lead ~
-        sig: parse_section ~
-        take!(if sig.hdr.size % 8 != 0 {8-(sig.hdr.size%8)} else {0}) ~
-        hdr: parse_section,
-        || { (lead, sig, hdr) }
-    )
-);
-
-// A different approach:
-// * Read the section header
 // * Peek ahead and read the data store
 // * Iterate through the tag entries:
 //   * Read a tag entry
@@ -167,49 +90,39 @@ named!(parse_headers(&[u8]) -> (Lead, HeaderSection, HeaderSection),
 //   * Return a (TagID, TagValue) pair
 // * Construct a HashMap<TagID, TagValue> from those pairs
 // * Skip padding bytes if the next section is aligned to an 8-byte boundary
-fn _parse_header(i: &[u8], align: bool) -> IResult<&[u8], Header> {
+pub fn parse_section_data(i: &[u8], count: usize, size: usize) -> IResult<&[u8], Header> {
     chain!(i,
-        // grab the header section header
-        hdr: parse_section_header ~
         // peek ahead and grab the store
-        store: peek!(chain!(take!(16*hdr.count) ~ store: take!(hdr.size), || { store })) ~
+        store: peek!(chain!(take!(16*count) ~ store: take!(size), || { store })) ~
         // parse each tag entry, grabbing its data from the store
-        pairs: count!(apply!(parse_tag, store), hdr.count as usize) ~
-        // we're finished with the store now - skip over it
-        take!(hdr.size) ~
-        // if align is true, read until we're aligned to an 8-byte boundary
-        cond!(align, take!(if hdr.size % 8 != 0 {8-(hdr.size%8)} else {0})),
+        pairs: count!(apply!(parse_tag, store), count) ~
+        // we're finished with the store now - consume it
+        take!(size),
         // dump the output pairs into a Header
         || { pairs.into_iter().collect::<Header>() }
     )
 }
 
-named!(parse_header(&[u8]) -> Header, apply!(_parse_header, false));
-named!(parse_header_aligned(&[u8]) -> Header, apply!(_parse_header, true));
-named!(parse_rpm_headers(&[u8]) -> (Lead, Header, Header),
-    tuple!(parse_lead, parse_header_aligned, parse_header)
-);
-
-// FIXME: these helpers are kinda gnarly and I don't like the weird lifetimes..
-
-fn parse_tag<'a, 'b>(i: &'a [u8], store: &'a [u8]) -> IResult<&'a [u8], (TagID, TagValue<'a> ) > {
+// these helpers are kinda gnarly, but that's partly because RPM is terrible
+fn parse_tag<'a>(i: &'a [u8], store: &'a [u8]) -> IResult<&'a [u8], (TagID, TagValue)> {
     let (rest, tag) = try_parse!(i, parse_tag_entry);
     let (_, val)    = try_parse!(&store[tag.offset as usize..], apply!(parse_tagval, &tag));
-    IResult::Done(rest, (tag.tag, val))
+    IResult::Done(rest, (tag.tagid, val))
 }
 
-fn parse_tagval<'a, 'b>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue<'a>> {
+fn parse_tagval<'a>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue> {
     let count = tag.count as usize;
     // TODO: benchmark this match block against the alt!(cond_reduce!(...)|) style
     match tag.tagtype {
-        TagType::Null   => value!(i, TagValue::Null),
-        TagType::Char   => map!(i, count!(be_u8, count),  TagValue::Char),
-        TagType::Int8   => map!(i, count!(be_u8, count),  TagValue::Int8),
-        TagType::Int16  => map!(i, count!(be_u16, count), TagValue::Int16),
-        TagType::Int32  => map!(i, count!(be_u32, count), TagValue::Int32),
-        TagType::Int64  => map!(i, count!(be_u64, count), TagValue::Int64),
-        TagType::String => map!(i, count!(cstr, count),   TagValue::String),
-        TagType::Binary => map!(i, take!(count),          TagValue::Binary),
+        TagType::NULL   => value!(i, TagValue::Null),
+        TagType::CHAR   => map!(i, count!(be_u8, count),  TagValue::Char),
+        TagType::INT8   => map!(i, count!(be_u8, count),  TagValue::Int8),
+        TagType::INT16  => map!(i, count!(be_u16, count), TagValue::Int16),
+        TagType::INT32  => map!(i, count!(be_u32, count), TagValue::Int32),
+        TagType::INT64  => map!(i, count!(be_u64, count), TagValue::Int64),
+        TagType::BIN    => map!(i, count!(be_u8, count),  TagValue::Binary),
+        TagType::STRING | TagType::STRING_ARRAY | TagType::I18NSTRING =>
+                           map!(i, count!(cstr, count),   TagValue::String),
     }
 }
 
@@ -271,7 +184,7 @@ fn parse_section_header_ok() {
 #[test]
 fn parse_tag_entry_ok() {
     assert_eq!(parse_tag_entry(&BINRPM1[0x70..0x80]), IResult::Done(&b""[..],
-      TagEntry { tag: 0x3e, tagtype: TagType::Binary, offset:0x1474, count:0x10 }
+      TagEntry { tagid: 0x3e, tagtype: TagType::BIN, offset:0x1474, count:0x10 }
     ))
 }
 
@@ -279,51 +192,23 @@ fn parse_tag_entry_ok() {
 fn parse_tag_entry_bad_tagtype() {
     let bytes = b"\0\0\0\xAA\0\0\0\xBB\0\0\0\xCC\0\0\0\xDD";
     assert_eq!(parse_tag_entry(bytes),
-        IResult::Error(Err::Position(ErrorKind::MapRes, &bytes[4..]))
+        IResult::Error(Err::Position(ErrorKind::MapOpt, &bytes[4..]))
     )
 }
 
 #[test]
 fn parse_tagval_str() {
     let store = &BINRPM1[0x1968..0x313a];
-    let tag = TagEntry { tag:0x03e8, tagtype:TagType::String, offset:0x0002, count:1 };
+    let tag = TagEntry { tagid:0x03e8, tagtype:TagType::STRING, offset:0x0002, count:1 };
     assert_eq!(parse_tagval(&store[tag.offset as usize..20], &tag),
-               IResult::Done(&store[11..20], TagValue::String(vec!["hardlink"])))
-}
-
-#[test]
-fn parse_full_header_ok() {
-    let (rest, (lead, sig, hdr)) = parse_headers(BINRPM1).unwrap();
-    assert_eq!(rest[..4], b"\xfd7zX"[..]); // XZ magic for the payload start
-    assert_eq!(lead.name, "hardlink-1:1.0-23.fc24");
-    assert_eq!(sig.tags, vec![
-        TagEntry { tag:0x03e, tagtype:TagType::Binary, offset:0x1474, count:0x10 },
-        TagEntry { tag:0x10c, tagtype:TagType::Binary, offset:0x0000, count:0x218 },
-        TagEntry { tag:0x10d, tagtype:TagType::String, offset:0x0218, count:0x1 },
-        TagEntry { tag:0x3e8, tagtype:TagType::Int32,  offset:0x0244, count:0x1 },
-        TagEntry { tag:0x3ea, tagtype:TagType::Binary, offset:0x0248, count:0x218 },
-        TagEntry { tag:0x3ec, tagtype:TagType::Binary, offset:0x0460, count:0x10 },
-        TagEntry { tag:0x3ef, tagtype:TagType::Int32,  offset:0x0470, count:0x1 },
-        TagEntry { tag:0x3f0, tagtype:TagType::Binary, offset:0x0474, count:0x1000 },
-    ]);
-    assert_eq!(hdr.hdr.count, 0x3e)
+               IResult::Done(&store[11..20], TagValue::String(vec!(String::from("hardlink")))))
 }
 
 #[test]
 fn test_parse_header_ok() {
-    let (_, hdr) = parse_header(&BINRPM1[0x60..]).unwrap();
-    assert_eq!(hdr.len(), 8);
-    assert_eq!(hdr.get(&(0x10d as TagID)),
-               Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
-}
-
-#[test]
-fn test_parse_rpm_headers() {
-    let (rest, (lead, sig, hdr)) = parse_rpm_headers(BINRPM1).unwrap();
-    assert_eq!(rest[..4], b"\xfd7zX"[..]); // XZ magic for the payload start
-    assert_eq!(lead.name, "hardlink-1:1.0-23.fc24");
-    assert_eq!(sig.get(&(0x10d as TagID)),
-               Some(&TagValue::String(vec!["801d920f02ca12b3570a2f96eed3452616033538"])));
-    assert_eq!(hdr.get(&(1000 as TagID)),
-               Some(&TagValue::String(vec!["hardlink"])));
+    let (_, h) = parse_section_header(&BINRPM1[0x60..0x70]).unwrap();
+    let (_, hdr) = parse_section_data(&BINRPM1[0x70..], h.count as usize, h.size as usize).unwrap();
+    assert_eq!(hdr.len(), h.count as usize);
+    assert_eq!(hdr.get(&(0x10d as TagID)), Some(&TagValue::String(
+                vec![String::from("801d920f02ca12b3570a2f96eed3452616033538")])));
 }
