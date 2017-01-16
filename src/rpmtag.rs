@@ -8,7 +8,7 @@
          non_snake_case)]
 #[derive(Copy, Clone)]
 #[repr(u32)]
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum RC {
     OK = 0,
     NOTFOUND = 1,
@@ -18,7 +18,7 @@ pub enum RC {
 }
 #[derive(Copy, Clone)]
 #[repr(i32)]
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum Tag {
     NOT_FOUND = -1,
     HEADERIMAGE = 61,
@@ -325,7 +325,7 @@ pub enum Tag {
 }
 #[derive(Copy, Clone)]
 #[repr(u32)]
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum DbiTag {
     PACKAGES = 0,
     LABEL = 2,
@@ -351,7 +351,7 @@ pub enum DbiTag {
 }
 #[derive(Copy, Clone)]
 #[repr(u32)]
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum SigTag {
     SIZE = 1000,
     LEMD5_1 = 1001,
@@ -372,7 +372,7 @@ pub enum SigTag {
 }
 #[derive(Copy, Clone)]
 #[repr(u32)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum TagType {
     NULL = 0,
     CHAR = 1,
@@ -387,7 +387,7 @@ pub enum TagType {
 }
 #[derive(Copy, Clone)]
 #[repr(u32)]
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum TagClass {
     NULL = 0,
     NUMERIC = 1,
@@ -396,7 +396,7 @@ pub enum TagClass {
 }
 #[derive(Copy, Clone)]
 #[repr(i32)]
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum SubTagType {
     REGION = -10,
     BIN_ARRAY = -11,
@@ -404,7 +404,7 @@ pub enum SubTagType {
 }
 #[derive(Copy, Clone)]
 #[repr(u32)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug,PartialEq,Eq,Hash)]
 pub enum TagReturnType {
     ANY = 0,
     SCALAR = 65536,

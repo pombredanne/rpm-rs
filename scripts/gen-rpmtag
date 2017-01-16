@@ -24,6 +24,7 @@ generate_enums() {
     sed -r -e '/^pub type /d' \
            -e '/^pub enum .* \{ \}$/d' \
            -e 's/^pub enum rpm(\S+)_e \{/pub enum \1 {/' \
+           -e 's/^#\[derive\(Debug\)\]/#[derive(Debug,PartialEq,Eq,Hash)]/' \
            -e 's/RPMRC_([A-Z0-9_]+) = /\1 = /' \
            -e 's/RPMTAG_([A-Z0-9_]+) = /\1 = /' \
            -e 's/RPMDBI_([A-Z0-9_]+) = /\1 = /' \
