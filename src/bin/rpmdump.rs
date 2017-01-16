@@ -15,38 +15,37 @@
  * Authors:
  *   Will Woods <wwoods@redhat.com>
  */
-extern crate rustc_serialize;
-extern crate docopt;
+
+ // FIXME: println!() panics if stdout closes (e.g. `rpmdump $rpm|head`)
+
+#[macro_use]
+extern crate clap;
 extern crate rpm;
 
-use docopt::Docopt;
-use rpm::Reader;
-use rpm::TagInfo;
-
-const USAGE: &'static str = "
-Usage: rpmdump [options] <rpm>...
-
-Options:
-    -o, --output FORMAT    Use the given output format.
-                           Valid formats: pretty, json, toml
-";
-
-#[derive(Debug, RustcDecodable)]
-enum Output { Pretty, JSON, TOML }
-
-#[derive(Debug, RustcDecodable)]
-struct Args {
-    arg_rpm: Vec<String>,
-    flag_output: Option<Output>,
-}
+use rpm::{Reader, TagInfo};
 
 fn main() {
-    let args:Args = Docopt::new(USAGE)
-                           .and_then(|d| d.decode())
-                           .unwrap_or_else(|e| e.exit());
-    // println!("args: {:?}", args); // show the args, for debugging purposes..
+    let m = clap_app!(rpmdump =>
+        (version: "0.1")
+        (author: "Will Woods <wwoods@redhat.com>")
+        (about: "Dump RPM header metadata in various formats")
 
-    for path in &args.arg_rpm {
+        (@arg format: -o --format possible_value[pretty json toml]
+            default_value("pretty")
+            "output format")
+        (@arg rpms: <RPM> * ...
+            "RPM to read")
+    ).get_matches();
+
+    let format = m.value_of("format").unwrap();
+    // TODO: set up formatter
+    match format {
+        "pretty" => (),
+        _ => println!("HRM I DUNNO HOW TO DO '{}' ACTUALLY", format)
+    }
+
+    let rpm_args = m.values_of("rpms").unwrap().into_iter();
+    for path in rpm_args {
         // open the file
         let mut r = match Reader::from_file(path) {
             Ok(r)  => r,
