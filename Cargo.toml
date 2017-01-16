@@ -2,7 +2,7 @@
 name = "rpm"
 version = "0.1.0"
 authors = ["Will Woods <wwoods@redhat.com>"]
-license = "LGPL-2.1"
+license = "LGPL-2.1+"
 
 [dependencies]
 nom = "1.2.4"
