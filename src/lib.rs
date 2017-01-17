@@ -15,8 +15,15 @@
  * Authors:
  *   Will Woods <wwoods@redhat.com>
  */
+
+// If built with --features bench, enable #[feature(test)]
+#![cfg_attr(feature="bench", feature(test))]
+
 #[macro_use]
 extern crate nom;
+
+#[macro_use]
+extern crate lazy_static;
 
 use std::result;
 

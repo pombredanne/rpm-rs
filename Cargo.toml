@@ -7,3 +7,7 @@ license = "LGPL-2.1+"
 [dependencies]
 nom = "1.2.4"
 clap = "2.20.0"
+lazy_static = "0.2.2"
+
+[features]
+bench = []

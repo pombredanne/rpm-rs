@@ -52,32 +52,31 @@ pub enum TagValue {
 // (i.e. valid tag names) without thinking about letting the user define tags
 // or their types..
 use rpmtag::TAG_INFO_TABLE;
+use std::collections::HashMap;
+lazy_static! {
+    // Name -> TagInfo hashmap. See note below about `name` vs. `id`.
+    static ref TAG_BY_NAME: HashMap<&'static str, &'static TagInfo> = {
+        TAG_INFO_TABLE.iter().map(|ti| (ti.name, ti)).collect()
+    };
+    // NOTE: TAG_INFO_TABLE has multiple entries with the same id, e.g.
+    //   Tag::PROVIDENAME -> ("PROVIDES", "PROVIDENAME", "P")
+    //   Tag::VERSION     -> ("V", "VERSION")
+    // so the `name` of the returned TagInfo might not match the `id`.
+    //static ref TAG_BY_ID: HashMap<TagID, &'static TagInfo> = {
+    static ref TAG_BY_ID: HashMap<TagID, &'static TagInfo> = {
+        TAG_INFO_TABLE.iter().map(|ti| (ti.id as TagID, ti)).collect()
+    };
+}
 
 impl TagInfo {
-    // NOTE: TAG_INFO_TABLE is sorted by name, so we can binary search
-    pub fn from_name(name: &str) -> Option<&'static TagInfo> {
-        let tagname = name.to_uppercase();
-        match TAG_INFO_TABLE.binary_search_by_key(&tagname, |ref ti| String::from(ti.name)) {
-            Ok(idx) => Some(&TAG_INFO_TABLE[idx]),
-            Err(_)  => None,
-        }
+    // look up TagInfo for the given name. Matching is case-insensitive.
+    pub fn from_name(name: &str) -> Option<&'static &'static TagInfo> {
+        TAG_BY_NAME.get(name.to_uppercase().as_str())
     }
-    pub fn from_name_lin(name: &str) -> Option<&'static TagInfo> {
-        let tagname = name.to_uppercase();
-        for ti in &TAG_INFO_TABLE[..] {
-            if ti.name == tagname {
-                return Some(ti);
-            }
-        }
-        None
-    }
-    pub fn from_id(id: TagID) -> Option<&'static TagInfo> {
-        for ti in &TAG_INFO_TABLE[..] {
-            if ti.id as TagID == id {
-                return Some(ti);
-            }
-        }
-        None
+    // Look up TagInfo for the given TagID (i32).
+    // NOTE: you can cast a Tag to a TagID with "as TagID".
+    pub fn from_id(id: TagID) -> Option<&'static &'static TagInfo> {
+        TAG_BY_ID.get(&id)
     }
 }
 
@@ -98,5 +97,70 @@ impl TagType {
             11 => Some(TagType::BIN), // extension used by some RPMs
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn from_name() {
+        assert_eq!(TagInfo::from_name("VERSION").unwrap().id, Tag::VERSION);
+    }
+    #[test]
+    fn from_id() {
+        assert_eq!(TagInfo::from_id(1000).unwrap().id, Tag::NAME);
+    }
+    #[test]
+    fn from_tag() {
+        assert_eq!(TagInfo::from_id(Tag::NAME as TagID).unwrap().id, Tag::NAME);
+        assert_eq!(TagInfo::from_id(Tag::VERSION as TagID).unwrap().id, Tag::VERSION);
+    }
+}
+
+#[cfg(feature="bench")]
+mod bench {
+    extern crate test;
+    use self::test::Bencher;
+    use tag::{Tag,TagInfo};
+    use super::{TAG_INFO_TABLE,TAG_BY_NAME,TAG_BY_ID};
+
+    // NOTE: TAG_INFO_TABLE is sorted by name, so we can binary search
+    fn from_name_bin(name: &str) -> Option<&'static TagInfo> {
+        let tagname = name.to_uppercase();
+        match TAG_INFO_TABLE.binary_search_by_key(&tagname, |ref ti| String::from(ti.name)) {
+            Ok(idx) => Some(&TAG_INFO_TABLE[idx]),
+            Err(_)  => None,
+        }
+    }
+    // Same deal, but linear search, which is slower (on average)
+    fn from_name_lin(name: &str) -> Option<&'static TagInfo> {
+        let tagname = name.to_uppercase();
+        for ti in &TAG_INFO_TABLE[..] {
+            if ti.name == tagname {
+                return Some(ti);
+            }
+        }
+        None
+    }
+
+    #[bench]
+    fn from_name_linear_best(b: &mut Bencher) {
+        b.iter(|| from_name_lin("ARCH"));
+    }
+
+    #[bench]
+    fn from_name_linear_worst(b: &mut Bencher) {
+        b.iter(|| from_name_lin("VERSION"));
+    }
+
+    #[bench]
+    fn from_name_binary(b: &mut Bencher) {
+        b.iter(|| from_name_bin("VERSION"));
+    }
+
+    #[bench]
+    fn from_name_hash(b: &mut Bencher) {
+        b.iter(|| TAG_BY_NAME.get("VERSION"));
     }
 }
