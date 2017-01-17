@@ -414,7 +414,8 @@ pub enum TagReturnType {
 }
 
 use tag::TagInfo;
-pub static TAG_INFO_TABLE: [TagInfo;239] = [
+pub const TABLESIZE:usize = 239;
+pub static TAG_INFO_TABLE: [TagInfo;TABLESIZE] = [
     TagInfo {name:"ARCHIVESIZE", shortname:"Archivesize", id:Tag::ARCHIVESIZE, ttype:TagType::INT32, retype:TagReturnType::SCALAR, extension:false},
     TagInfo {name:"ARCH", shortname:"Arch", id:Tag::ARCH, ttype:TagType::STRING, retype:TagReturnType::SCALAR, extension:false},
     TagInfo {name:"BASENAMES", shortname:"Basenames", id:Tag::BASENAMES, ttype:TagType::STRING_ARRAY, retype:TagReturnType::ARRAY, extension:false},

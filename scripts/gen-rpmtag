@@ -16,7 +16,7 @@
 # Authors:
 #   Will Woods <wwoods@redhat.com>
 #
-
+# This is roughly like rpm/lib/gentagtbl.sh, but for Rust.
 
 generate_enums() {
     bindgen "$1" | \
@@ -87,6 +87,7 @@ echo
 generate_enums "$infile"
 echo
 echo "use tag::TagInfo;"
-echo "pub static TAG_INFO_TABLE: [TagInfo;${count}] = ["
+echo "pub const TABLESIZE:u8 = ${count};"
+echo "pub static TAG_INFO_TABLE: [TagInfo;TABLESIZE as usize] = ["
 get_tag_info "$infile" | while read line; do rewrite_line $line; done | sort
 echo "];"
