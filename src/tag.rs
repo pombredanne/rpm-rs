@@ -54,6 +54,23 @@ pub enum TagValue {
 use rpmtag::TAG_INFO_TABLE;
 
 impl TagInfo {
+    // NOTE: TAG_INFO_TABLE is sorted by name, so we can binary search
+    pub fn from_name(name: &str) -> Option<&'static TagInfo> {
+        let tagname = name.to_uppercase();
+        match TAG_INFO_TABLE.binary_search_by_key(&tagname, |ref ti| String::from(ti.name)) {
+            Ok(idx) => Some(&TAG_INFO_TABLE[idx]),
+            Err(_)  => None,
+        }
+    }
+    pub fn from_name_lin(name: &str) -> Option<&'static TagInfo> {
+        let tagname = name.to_uppercase();
+        for ti in &TAG_INFO_TABLE[..] {
+            if ti.name == tagname {
+                return Some(ti);
+            }
+        }
+        None
+    }
     pub fn from_id(id: TagID) -> Option<&'static TagInfo> {
         for ti in &TAG_INFO_TABLE[..] {
             if ti.id as TagID == id {
