@@ -54,15 +54,11 @@ pub enum TagValue {
 use rpmtag::TAG_INFO_TABLE;
 use std::collections::HashMap;
 lazy_static! {
-    // Name -> TagInfo hashmap. See note below about `name` vs. `id`.
+    // name -> TagInfo hashmap
     static ref TAG_BY_NAME: HashMap<&'static str, &'static TagInfo> = {
         TAG_INFO_TABLE.iter().map(|ti| (ti.name, ti)).collect()
     };
-    // NOTE: TAG_INFO_TABLE has multiple entries with the same id, e.g.
-    //   Tag::PROVIDENAME -> ("PROVIDES", "PROVIDENAME", "P")
-    //   Tag::VERSION     -> ("V", "VERSION")
-    // so the `name` of the returned TagInfo might not match the `id`.
-    //static ref TAG_BY_ID: HashMap<TagID, &'static TagInfo> = {
+    // TagID -> TagInfo hashmap
     static ref TAG_BY_ID: HashMap<TagID, &'static TagInfo> = {
         TAG_INFO_TABLE.iter().map(|ti| (ti.id as TagID, ti)).collect()
     };
@@ -74,7 +70,11 @@ impl TagInfo {
         TAG_BY_NAME.get(name.to_uppercase().as_str())
     }
     // Look up TagInfo for the given TagID (i32).
-    // NOTE: you can cast a Tag to a TagID with "as TagID".
+    // Hint: you can cast a Tag to a TagID with "as TagID".
+    // NOTE: TAG_INFO_TABLE has multiple entries with the same id, e.g.
+    //   Tag::PROVIDENAME -> ("PROVIDES", "PROVIDENAME", "P")
+    //   Tag::VERSION     -> ("V", "VERSION")
+    // so the `name` of the returned TagInfo might not match the `id`.
     pub fn from_id(id: TagID) -> Option<&'static &'static TagInfo> {
         TAG_BY_ID.get(&id)
     }
