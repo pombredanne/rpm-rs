@@ -29,5 +29,5 @@ mod reader;
 
 pub use error::RPMError;
 pub use reader::Reader;
-pub use tag::TagInfo;
+pub use tag::{Tag, TagInfo};
 pub type Result<T> = result::Result<T, error::RPMError>;

@@ -15,26 +15,27 @@
  * Authors:
  *   Will Woods <wwoods@redhat.com>
  */
-
 extern crate rpm;
 
-// use std::io::Cursor;
+use rpm::{Tag, TagInfo};
 
-// for test stability, we include the RPM data in-place at build time
-macro_rules! rpm {
-    ($e:expr) => (Cursor::new(&include_bytes!(concat!("rpms/", $e))[..]))
+#[test]
+fn taginfo_from_id() {
+    assert_eq!(TagInfo::from_id(1000).unwrap().id, Tag::NAME);
 }
 
-macro_rules! try_io {
-    ($e:expr) => (match $e {
-        Ok(v) => v,
-        Err(e) => panic!("{} returned {}", stringify!($e), e),
-    })
+#[test]
+fn taginfo_from_bad_id() {
+    assert_eq!(TagInfo::from_id(31337), None);
 }
 
-macro_rules! expect_err {
-    ($expr:expr, $err:pat) => (match $expr.unwrap_err() {
-        $err => true,
-        _ => panic!("wrong error type"),
-    })
+#[test]
+fn taginfo_from_name() {
+    assert_eq!(TagInfo::from_name("Name").unwrap().id, Tag::NAME);
+    assert_eq!(TagInfo::from_name("arch").unwrap().id, Tag::ARCH);
+}
+
+#[test]
+fn taginfo_from_bad_name() {
+    assert_eq!(TagInfo::from_name("lol wut"), None);
 }

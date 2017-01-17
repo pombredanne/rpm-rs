@@ -100,13 +100,3 @@ impl TagType {
         }
     }
 }
-
-#[test]
-fn test_taginfo_from_tagid() {
-    assert_eq!(TagInfo::from_id(Tag::NAME as TagID).unwrap().id, Tag::NAME);
-}
-
-#[test]
-fn test_taginfo_from_bad_tagid() {
-    assert_eq!(TagInfo::from_id(31337 as TagID), None);
-}
