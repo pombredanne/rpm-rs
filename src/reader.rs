@@ -109,7 +109,7 @@ impl Reader<io::Cursor<Vec<u8>>> {
         Reader::from_bytes(s.into().into_bytes())
     }
 
-    /// Creates a CSV reader for an in-memory buffer of bytes.
+    /// Creates a RPM reader for an in-memory buffer of bytes.
     pub fn from_bytes<'a, V>(bytes: V) -> Reader<io::Cursor<Vec<u8>>>
             where V: Into<Vec<u8>> {
         Reader::from_reader(io::Cursor::new(bytes.into()))
