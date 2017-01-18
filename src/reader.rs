@@ -24,8 +24,6 @@ use header::{Lead, Header};
 use parser::{HeaderSectionHeader, parse_lead, parse_section_header, parse_section_data};
 use error::RPMError;
 use Result;
-// TODO: parsers should return better errors so we don't need to use this..
-use nom::IResult;
 
 /// An RPM reader.
 pub struct Reader<R: io::Read> {
@@ -48,19 +46,13 @@ impl<R:io::Read> Reader<R> {
     pub fn lead(&mut self) -> Result<Lead> {
         let mut buf = [0;0x60];
         try!(self.rdr.read_exact(&mut buf));
-        match parse_lead(&buf) {
-            IResult::Done(_, lead) => Ok(lead),
-            _                      => Err(RPMError::BadMagic),
-        }
+        Ok(try!(parse_lead(&buf).to_result()))
     }
     // Grab a section header, so we can figure out how much to read
     fn section_header(&mut self) -> Result<HeaderSectionHeader> {
         let mut buf = [0;0x10];
         try!(self.rdr.read_exact(&mut buf));
-        match parse_section_header(&buf) {
-            IResult::Done(_, hdr) => Ok(hdr),
-            _                     => Err(RPMError::BadMagic),
-        }
+        Ok(try!(parse_section_header(&buf).to_result()))
     }
     // Read and parse an RPM Header section.
     pub fn header(&mut self) -> Result<Header> {
@@ -86,11 +78,11 @@ impl<R:io::Read> Reader<R> {
         } else {
             self.did_hdr = true;
         }
-        // And now: parse the buffer into the Header we're returning.
-        match parse_section_data(buf.as_slice(), hdr.count as usize, hdr.size as usize) {
-            IResult::Done(_, header) => Ok(header),
-            _ => Err(RPMError::Internal), // TODO: better errors for parsing failures
-        }
+        // And now: parse the buffer into the Header we're returning
+        let count = hdr.count as usize;
+        let size = hdr.size as usize;
+        // XXX: can't do try!() here without type inference probs?
+        parse_section_data(&buf, count, size).to_result().map_err(RPMError::from)
     }
 
 }
@@ -117,33 +109,78 @@ impl Reader<io::Cursor<Vec<u8>>> {
 }
 
 #[cfg(test)]
-static BINRPM1: &'static [u8] = include_bytes!("../tests/rpms/binary.x86_64.rpm");
+mod tests {
+    use super::Reader;
+    use header::Lead;
+    use std::io::Read;
+    use error::{RPMError, RPMFileError};
+    static BINRPM1: &'static [u8] = include_bytes!("../tests/rpms/binary.x86_64.rpm");
 
-#[test]
-fn read_lead() {
-    let mut r = Reader::from_bytes(BINRPM1);
-    assert_eq!(r.lead().unwrap(),
-        Lead {
-            major: 3,
-            minor: 0,
-            rpm_type: 0,
-            archnum: 1,
-            name: String::from("hardlink-1:1.0-23.fc24"),
-            osnum: 1,
-            signature_type: 5,
+    #[test]
+    fn read_lead() {
+        let mut r = Reader::from_bytes(BINRPM1);
+        assert_eq!(r.lead().unwrap(),
+            Lead {
+                major: 3,
+                minor: 0,
+                rpm_type: 0,
+                archnum: 1,
+                name: String::from("hardlink-1:1.0-23.fc24"),
+                osnum: 1,
+                signature_type: 5,
+            }
+        )
+    }
+
+    #[test]
+    fn read_short_lead() {
+        let mut r = Reader::from_bytes(&BINRPM1[0..10]);
+        match r.lead().unwrap_err() {
+            RPMError::Io(_) => (),
+            e => panic!("unexpected error: {}", e),
         }
-    )
-}
+    }
 
-#[test]
-fn read_headers() {
-    let mut r = Reader::from_bytes(BINRPM1);
-    let _ = r.lead(); // toss that junk
-    let sig = r.header().unwrap();
-    let hdr = r.header().unwrap();
-    assert_eq!(sig.len(), 8);
-    assert_eq!(hdr.len(), 62);
-    let mut magic = [0;4];
-    r.rdr.read_exact(&mut magic).unwrap();
-    assert_eq!(magic[..], b"\xfd7zX"[..]);
+    #[test]
+    fn read_bad_lead_magic() {
+        let bad_bytes = &[0; 0x60];
+        let mut r = Reader::from_bytes(&bad_bytes[..]);
+        match r.lead().unwrap_err() {
+            RPMError::File(RPMFileError::BadMagic) => (),
+            e => panic!("unexpected error: {}", e),
+        }
+    }
+
+    #[test]
+    fn read_short_header() {
+        let mut r = Reader::from_bytes(&BINRPM1[..0x66]);
+        let _ = r.lead(); // toss that junk
+        match r.header().unwrap_err() {
+            RPMError::Io(_) => (),
+            e => panic!("unexpected error: {}", e),
+        }
+    }
+
+    #[test]
+    fn read_bad_header_magic() {
+        let bad_bytes = [0; 0x20];
+        let mut r = Reader::from_bytes(&bad_bytes[..]);
+        match r.header().unwrap_err() {
+            RPMError::File(RPMFileError::BadMagic) => (),
+            e => panic!("unexpected error: {}", e),
+        }
+    }
+
+    #[test]
+    fn read_headers() {
+        let mut r = Reader::from_bytes(BINRPM1);
+        let _ = r.lead(); // toss that junk
+        let sig = r.header().unwrap();
+        let hdr = r.header().unwrap();
+        assert_eq!(sig.len(), 8);
+        assert_eq!(hdr.len(), 62);
+        let mut magic = [0;4];
+        r.rdr.read_exact(&mut magic).unwrap();
+        assert_eq!(magic[..], b"\xfd7zX"[..]);
+    }
 }

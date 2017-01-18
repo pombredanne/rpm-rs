@@ -149,84 +149,86 @@ fn parse_tagval<'a>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue> 
  *************************************************************/
 
 #[cfg(test)]
-use nom::{Err, ErrorKind, Needed};
-#[cfg(test)]
-static BINRPM1: &'static [u8] = include_bytes!("../tests/rpms/binary.x86_64.rpm");
+mod tests {
+    use super::*;
+    // XXX: Not sure why these need to be specifically used but...
+    use super::{TagEntry, parse_tag_entry, parse_tagval};
+    use header::Lead;
+    use tag::{TagType, TagValue, TagID};
+    use nom::{ErrorKind, Needed, IResult};
+    static BINRPM1: &'static [u8] = include_bytes!("../tests/rpms/binary.x86_64.rpm");
 
-#[test]
-fn parse_lead_bad_magic() {
-    let bytes = &[0; 0x60];
-    assert_eq!(parse_lead(bytes),
-        IResult::Error(Err::Position(ErrorKind::Tag, &bytes[..]))
-    )
-}
+    #[test]
+    fn parse_lead_bad_magic() {
+        let bytes = &[0; 0x60];
+        assert_eq!(parse_lead(bytes), IResult::Error(ErrorKind::Tag))
+    }
 
-#[test]
-fn parse_lead_empty() {
-    let bytes = b"";
-    assert_eq!(parse_lead(bytes),
-        IResult::Incomplete(Needed::Size(4))
-    )
-}
+    #[test]
+    fn parse_lead_empty() {
+        let bytes = b"";
+        assert_eq!(parse_lead(bytes),
+            IResult::Incomplete(Needed::Size(4))
+        )
+    }
 
-#[test]
-fn parse_lead_short() {
-    let bytes = b"\xED\xAB\xEE\xDB\x03\x00";
-    assert_eq!(parse_lead(bytes),
-        IResult::Incomplete(Needed::Size(8)) // WW: so.. why is this Size(8)?
-    )
-}
+    #[test]
+    fn parse_lead_short() {
+        let bytes = b"\xED\xAB\xEE\xDB\x03\x00";
+        assert_eq!(parse_lead(bytes),
+            IResult::Incomplete(Needed::Size(8)) // WW: so.. why is this Size(8)?
+        )
+    }
 
-#[test]
-fn parse_lead_ok() {
-    assert_eq!(parse_lead(&BINRPM1[..0x60]), IResult::Done(&b""[..],
-        Lead {
-            major: 3,
-            minor: 0,
-            rpm_type: 0,
-            archnum: 1,
-            name: String::from("hardlink-1:1.0-23.fc24"),
-            osnum: 1,
-            signature_type: 5,
-        }
-    ))
-}
+    #[test]
+    fn parse_lead_ok() {
+        assert_eq!(parse_lead(&BINRPM1[..0x60]), IResult::Done(&b""[..],
+            Lead {
+                major: 3,
+                minor: 0,
+                rpm_type: 0,
+                archnum: 1,
+                name: String::from("hardlink-1:1.0-23.fc24"),
+                osnum: 1,
+                signature_type: 5,
+            }
+        ))
+    }
 
-#[test]
-fn parse_section_header_ok() {
-    assert_eq!(parse_section_header(&BINRPM1[0x60..0x70]), IResult::Done(&b""[..],
-        HeaderSectionHeader { version: 1, count: 8, size: 0x1484 }
-    ))
-}
+    #[test]
+    fn parse_section_header_ok() {
+        assert_eq!(parse_section_header(&BINRPM1[0x60..0x70]), IResult::Done(&b""[..],
+            HeaderSectionHeader { version: 1, count: 8, size: 0x1484 }
+        ))
+    }
 
-#[test]
-fn parse_tag_entry_ok() {
-    assert_eq!(parse_tag_entry(&BINRPM1[0x70..0x80]), IResult::Done(&b""[..],
-      TagEntry { tagid: 0x3e, tagtype: TagType::BIN, offset:0x1474, count:0x10 }
-    ))
-}
+    #[test]
+    fn parse_tag_entry_ok() {
+        assert_eq!(parse_tag_entry(&BINRPM1[0x70..0x80]), IResult::Done(&b""[..],
+          TagEntry { tagid: 0x3e, tagtype: TagType::BIN, offset:0x1474, count:0x10 }
+        ))
+    }
 
-#[test]
-fn parse_tag_entry_bad_tagtype() {
-    let bytes = b"\0\0\0\xAA\0\0\0\xBB\0\0\0\xCC\0\0\0\xDD";
-    assert_eq!(parse_tag_entry(bytes),
-        IResult::Error(Err::Position(ErrorKind::MapOpt, &bytes[4..]))
-    )
-}
+    #[test]
+    fn parse_tag_entry_bad_tagtype() {
+        let bytes = b"\0\0\0\xAA\0\0\0\xBB\0\0\0\xCC\0\0\0\xDD";
+        assert_eq!(parse_tag_entry(bytes), IResult::Error(ErrorKind::MapOpt));
+    }
 
-#[test]
-fn parse_tagval_str() {
-    let store = &BINRPM1[0x1968..0x313a];
-    let tag = TagEntry { tagid:0x03e8, tagtype:TagType::STRING, offset:0x0002, count:1 };
-    assert_eq!(parse_tagval(&store[tag.offset as usize..20], &tag),
-               IResult::Done(&store[11..20], TagValue::String(vec!(String::from("hardlink")))))
-}
+    #[test]
+    fn parse_tagval_str() {
+        let store = &BINRPM1[0x1968..0x313a];
+        let tag = TagEntry { tagid:0x03e8, tagtype:TagType::STRING, offset:0x0002, count:1 };
+        assert_eq!(parse_tagval(&store[tag.offset as usize..20], &tag),
+                   IResult::Done(&store[11..20], TagValue::String(vec!(String::from("hardlink")))))
+    }
 
-#[test]
-fn test_parse_header_ok() {
-    let (_, h) = parse_section_header(&BINRPM1[0x60..0x70]).unwrap();
-    let (_, hdr) = parse_section_data(&BINRPM1[0x70..], h.count as usize, h.size as usize).unwrap();
-    assert_eq!(hdr.len(), h.count as usize);
-    assert_eq!(hdr.get(&(0x10d as TagID)), Some(&TagValue::String(
-                vec![String::from("801d920f02ca12b3570a2f96eed3452616033538")])));
+    #[test]
+    fn test_parse_header_ok() {
+        let (_, h) = parse_section_header(&BINRPM1[0x60..0x70]).unwrap();
+        let (_, hdr) = parse_section_data(&BINRPM1[0x70..], h.count as usize, h.size as usize).unwrap();
+        assert_eq!(hdr.len(), h.count as usize);
+        assert_eq!(hdr.get(&(0x10d as TagID)), Some(&TagValue::String(
+                    vec![String::from("801d920f02ca12b3570a2f96eed3452616033538")])));
+    }
 }

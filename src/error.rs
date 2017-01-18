@@ -19,11 +19,12 @@
 use std::io;
 use std::fmt;
 use std::error;
+use nom;
 
 #[derive(Debug)]
 pub enum RPMError {
     Io(io::Error),
-    BadMagic,
+    File(RPMFileError),
     Internal,
 }
 
@@ -32,9 +33,9 @@ pub enum RPMError {
 impl fmt::Display for RPMError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            RPMError::Io(ref err) => write!(f, "IO error: {}", err),
-            RPMError::BadMagic => write!(f, "Bad RPM file magic"),
-            RPMError::Internal => write!(f, "Internal error"),
+            RPMError::Io(ref err)   => write!(f, "IO error: {}", err),
+            RPMError::File(ref err) => write!(f, "RPM file error: {}", err),
+            RPMError::Internal      => write!(f, "Internal error"),
         }
     }
 }
@@ -42,17 +43,17 @@ impl fmt::Display for RPMError {
 impl error::Error for RPMError {
     fn description(&self) -> &str {
         match *self {
-            RPMError::Io(ref err) => err.description(),
-            RPMError::BadMagic => "bad magic",
-            RPMError::Internal => "internal error",
+            RPMError::Io(ref err)   => err.description(),
+            RPMError::File(ref err) => err.description(),
+            RPMError::Internal      => "internal error",
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
         match *self {
-            RPMError::Io(ref err) => Some(err),
-            RPMError::BadMagic => None,
-            RPMError::Internal => None,
+            RPMError::Io(ref err)   => Some(err),
+            RPMError::File(ref err) => Some(err),
+            RPMError::Internal      => None,
         }
     }
 }
@@ -60,6 +61,18 @@ impl error::Error for RPMError {
 impl From<io::Error> for RPMError {
     fn from(err: io::Error) -> RPMError {
         RPMError::Io(err)
+    }
+}
+
+// convert a parsing error from nom into a RPMFileError.
+impl From<nom::ErrorKind> for RPMError {
+    fn from(err: nom::ErrorKind) -> RPMError {
+        match err {
+            // If it's a bad tag, that's BadMagic
+            nom::ErrorKind::Tag => RPMError::File(RPMFileError::BadMagic),
+            // Some other header parsing error...
+            _                   => RPMError::File(RPMFileError::BadHeader),
+        }
     }
 }
 
