@@ -53,71 +53,72 @@ named!(cstr(&[u8]) -> String,
 // macro that gets a fixed-size NUL-terminated string, tossing the NUL bytes
 macro_rules! take_cstr (
     ($i:expr, $maxlen:expr) => (
-        chain!($i,
-            s: cstr ~
-            length: expr_opt!( { ($maxlen as usize).checked_sub(s.len()+1) } ) ~
-            take!(length),
-            || { s }
+        do_parse!($i,
+            s: cstr >>
+            length: expr_opt!( { ($maxlen as usize).checked_sub(s.len()+1) } ) >>
+            take!(length) >>
+            (s)
         )
     );
 );
 
-named!(pub parse_lead(&[u8]) -> Lead,
-    chain!(
-        tag!([0xED, 0xAB, 0xEE, 0xDB]) ~ // the tilde chains items together
-        maj:  be_u8  ~
-        min:  be_u8  ~
-        typ:  be_u16 ~
-        arch: be_u16 ~
-        name: take_cstr!(66) ~
-        os:   be_u16 ~
-        sig:  be_u16 ~
-        take!(16), // the chain ends with a comma
-        // closure yields our return value
-        || { Lead {major: maj, minor: min, rpm_type: typ, archnum: arch,
-                   name: name, osnum: os, signature_type: sig} }
-  )
+named!(pub parse_lead<Lead>,
+    do_parse!(
+        tag!([0xED, 0xAB, 0xEE, 0xDB]) >>
+        maj:  be_u8  >>
+        min:  be_u8  >>
+        typ:  be_u16 >>
+        arch: be_u16 >>
+        name: take_cstr!(66) >>
+        os:   be_u16 >>
+        sig:  be_u16 >>
+        take!(16)    >>
+        (Lead {
+            major: maj, minor: min, rpm_type: typ, archnum: arch,
+            name: name, osnum: os, signature_type: sig
+        })
+    )
 );
 
-named!(pub parse_section_header(&[u8]) -> HeaderSectionHeader,
-    chain!(
-        magic:    tag!([0x8E, 0xAD, 0xE8]) ~
-        version:  be_u8    ~
-        reserved: take!(4) ~
-        count:    be_u32   ~
-        size:     be_u32,
-        || { HeaderSectionHeader {version:version, count:count, size:size} }
+named!(pub parse_section_header<HeaderSectionHeader>,
+    do_parse!(
+        magic:    tag!([0x8E, 0xAD, 0xE8]) >>
+        version:  be_u8    >>
+        reserved: take!(4) >>
+        count:    be_u32   >>
+        size:     be_u32   >>
+        (HeaderSectionHeader {version:version, count:count, size:size})
     )
 );
 
 // read a single TagEntry
-named!(parse_tag_entry(&[u8]) -> TagEntry,
-    chain!(
-        id: be_i32 ~
-        typ: map_opt!(be_u32, TagType::from_u32) ~
-        off: be_u32 ~
-        cnt: be_u32,
-        || { TagEntry {tagid:id, tagtype:typ, offset:off, count:cnt} }
+named!(parse_tag_entry<TagEntry>,
+    do_parse!(
+        id: be_i32 >>
+        typ: map_opt!(be_u32, TagType::from_u32) >>
+        off: be_u32 >>
+        cnt: be_u32 >>
+        (TagEntry {tagid:id, tagtype:typ, offset:off, count:cnt})
     )
 );
 
+// Here's the strategy for reading the Header:
 // * Peek ahead and read the data store
 // * Iterate through the tag entries:
 //   * Read a tag entry
 //   * Read its value from the store
 //   * Return a (TagID, TagValue) pair
 // * Construct a HashMap<TagID, TagValue> from those pairs
-// * Skip padding bytes if the next section is aligned to an 8-byte boundary
 pub fn parse_section_data(i: &[u8], count: usize, size: usize) -> IResult<&[u8], Header> {
-    chain!(i,
+    do_parse!(i,
         // peek ahead and grab the store
-        store: peek!(chain!(take!(16*count) ~ store: take!(size), || { store })) ~
+        store: peek!(do_parse!(take!(16*count) >> store:take!(size) >> (store))) >>
         // parse each tag entry, grabbing its data from the store
-        pairs: count!(apply!(parse_tag, store), count) ~
+        pairs: count!(apply!(parse_tag, store), count) >>
         // we're finished with the store now - consume it
-        take!(size),
+        take!(size) >>
         // dump the output pairs into a Header
-        || { pairs.into_iter().collect::<Header>() }
+        (pairs.into_iter().collect::<Header>())
     )
 }
 
