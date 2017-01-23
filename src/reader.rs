@@ -60,31 +60,19 @@ impl<R:io::Read> Reader<R> {
         let hdr = try!(self.section_header());
         // Figure out how much data to read.
         // If this is the signature header, pad to an 8-byte-aligned size
-        let datasize: u32;
-        if self.did_sig {
-            datasize = 16*hdr.count + hdr.size;
-        } else {
-            let pad = if hdr.size % 8 != 0 {8-(hdr.size%8)} else {0};
-            datasize = 16*hdr.count + hdr.size + pad;
-        };
+        let padsize = if !self.did_sig { hdr.padsize() } else { 0 };
+        let datasize = hdr.datasize() + padsize;
         // Okay, make a buffer and fill it up
-        let mut buf = Vec::with_capacity(datasize as usize);
+        let mut buf = Vec::with_capacity(datasize);
         try!((&mut self.rdr).take(datasize as u64).read_to_end(&mut buf));
-        //try!(self.rdr.read_exact(&mut buf)); // XXX: why doesn't this work??
-
         // Mark whether that was the sig or the hdr section
-        if !self.did_sig {
-            self.did_sig = true;
-        } else {
-            self.did_hdr = true;
-        }
+        if !self.did_sig { self.did_sig = true } else { self.did_hdr = true };
         // And now: parse the buffer into the Header we're returning
         let count = hdr.count as usize;
         let size = hdr.size as usize;
         // XXX: can't do try!() here without type inference probs?
         parse_section_data(&buf, count, size).to_result().map_err(RPMError::from)
     }
-
 }
 
 impl Reader<fs::File> {

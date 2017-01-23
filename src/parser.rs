@@ -41,9 +41,16 @@ struct TagEntry {
     count: u32,
 }
 
-// HERE'S THE PARSER STUFF YAYYYYY
+impl HeaderSectionHeader {
+    pub fn datasize(&self) -> usize {
+        (16*self.count + self.size) as usize
+    }
+    pub fn padsize(&self) -> usize {
+        (if self.size % 8 != 0 {8-(self.size%8)} else {0}) as usize
+    }
+}
 
-// TODO: these should return the errors from RPMFileError
+// HERE'S THE PARSER STUFF YAYYYYY
 
 // quick parser function to grab a NUL-terminated string
 named!(cstr(&[u8]) -> String,
