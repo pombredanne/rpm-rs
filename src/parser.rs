@@ -125,12 +125,15 @@ pub fn parse_section_data(i: &[u8], count: usize, size: usize) -> IResult<&[u8],
 // these helpers are kinda gnarly, but that's partly because RPM is terrible
 fn parse_tag<'a>(i: &'a [u8], store: &'a [u8]) -> IResult<&'a [u8], (TagID, TagValue)> {
     let (rest, tag) = try_parse!(i, parse_tag_entry);
-    let (_, val)    = try_parse!(&store[tag.offset as usize..], apply!(parse_tagval, &tag));
+    let (_, val)    = try_parse!(store, apply!(parse_tagval, &tag));
     IResult::Done(rest, (tag.tagid, val))
 }
 
-fn parse_tagval<'a>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue> {
+// Pull the TagValue for the given TagEntry out of the store, consuming the
+// bytes read. (This may throw off your offsets; consider parse_tagval)
+fn parse_and_consume_tagval<'a>(store: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue> {
     let count = tag.count as usize;
+    let i = &store[tag.offset as usize..];
     // TODO: benchmark this match block against the alt!(cond_reduce!(...)|) style
     match tag.tagtype {
         TagType::NULL   => value!(i, TagValue::Null),
@@ -143,6 +146,12 @@ fn parse_tagval<'a>(i: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue> 
         TagType::STRING | TagType::STRING_ARRAY | TagType::I18NSTRING =>
                            map!(i, count!(cstr, count),   TagValue::String),
     }
+}
+
+// Pull the TagValue for the given TagEntry out of the store.
+// Leaves the store untouched.
+fn parse_tagval<'a>(store: &'a [u8], tag: &TagEntry) -> IResult<&'a [u8], TagValue> {
+    peek!(store, apply!(parse_and_consume_tagval, &tag))
 }
 
 /*************************************************************
@@ -219,9 +228,13 @@ mod tests {
     #[test]
     fn parse_tagval_str() {
         let store = &BINRPM1[0x1968..0x313a];
+        let ministore = &store[..20]; // just a li'l chunk
         let tag = TagEntry { tagid:0x03e8, tagtype:TagType::STRING, offset:0x0002, count:1 };
-        assert_eq!(parse_tagval(&store[tag.offset as usize..20], &tag),
-                   IResult::Done(&store[11..20], TagValue::String(vec!(String::from("hardlink")))))
+        let name = String::from("hardlink");
+        // expect that the remainder will start after the trailing NUL
+        let rest = &ministore[tag.offset as usize+name.len()+1..];
+        assert_eq!(parse_tagval(ministore, &tag),
+                   IResult::Done(ministore, TagValue::String(vec!(String::from("hardlink")))))
     }
 
     #[test]
